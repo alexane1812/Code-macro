@@ -1,0 +1,194 @@
+##################################################################
+# Master 1 APE - MPE
+# PIB réel UE : Filtres de tendance + Stationnarité (Eurostat)
+##################################################################
+
+# Nettoyer l'environnement
+rm(list = ls())
+try(dev.off(dev.list()["RStudioGD"]), silent = TRUE)
+try(dev.off(), silent = TRUE)
+
+# Packages
+library(dplyr)
+library(lubridate)
+library(zoo)
+library(ggplot2)
+library(scales)
+library(tidyr)
+library(eurostat)
+library(urca)
+library(tseries)
+library(quantmod)
+library(tibble)
+library(mFilter)
+library(forecast)
+
+##################################################################
+# 1) Collecte du PIB réel annuel UE27 (Eurostat)
+##################################################################
+
+gdp_eu_a <- get_eurostat_json(
+  "nama_10_gdp",
+  filters = list(
+    geo     = "EU27_2020",
+    na_item = "B1GQ",
+    unit    = "CLV10_MEUR"
+  ),
+  time_format = "raw"
+) %>%
+  mutate(
+    date = eurotime2date(time),
+    gdp_real = as.numeric(values)
+  ) %>%
+  filter(date >= as.Date("1995-01-01"),
+         date <= as.Date("2025-12-31")) %>%
+  arrange(date) %>%
+  transmute(
+    date,
+    gdp_real,
+    gdp_growth = gdp_real / lag(gdp_real, 1) - 1
+  )
+
+##################################################################
+# 2) Préparer séries log et tendances déterministes
+##################################################################
+
+gdp_eu_a <- gdp_eu_a %>%
+  mutate(
+    log_gdp = log(gdp_real),
+    t = row_number(),
+    t2 = t^2
+  )
+
+# Tendances linéaire et quadratique
+fit_lin  <- lm(log_gdp ~ t, data = gdp_eu_a)
+fit_quad <- lm(log_gdp ~ t + t2, data = gdp_eu_a)
+
+gdp_eu_a <- gdp_eu_a %>%
+  mutate(
+    trend_lin  = predict(fit_lin, newdata = gdp_eu_a),
+    trend_quad = predict(fit_quad, newdata = gdp_eu_a)
+  )
+
+# Graphique tendances
+ggplot(gdp_eu_a, aes(x=date)) +
+  geom_line(aes(y=log_gdp, color="Log(PIB réel)"), alpha=0.7) +
+  geom_line(aes(y=trend_lin, color="Tendance linéaire")) +
+  geom_line(aes(y=trend_quad, color="Tendance quadratique")) +
+  labs(title="Tendances déterministes du PIB réel UE27",
+       y="log(PIB réel)", x="Année") +
+  theme_minimal() +
+  theme(legend.position="bottom")
+
+##################################################################
+# 3) Filtres cycliques
+##################################################################
+
+# Créer la série temporelle
+log_gdp_ts <- ts(na.omit(gdp_eu_a$log_gdp),
+                 start = c(year(min(gdp_eu_a$date))),
+                 frequency = 1)
+
+# HP
+hp <- hpfilter(gdp_eu_a$log_gdp, freq=100)
+gdp_eu_a$hp_trend  <- hp$trend
+gdp_eu_a$hp_cycle  <- hp$cycle
+
+# BK
+bk <- bkfilter(gdp_eu_a$log_gdp, pl=6, pu=32, nfix=NULL, drift=FALSE)
+gdp_eu_a$bk_trend  <- bk$trend
+gdp_eu_a$bk_cycle  <- bk$cycle
+
+# CF
+cf <- cffilter(gdp_eu_a$log_gdp, pl=6, pu=32, root=TRUE, drift=FALSE, type="asymmetric")
+gdp_eu_a$cf_trend  <- cf$trend
+gdp_eu_a$cf_cycle  <- cf$cycle
+
+# Hamilton
+h <- 2
+df_h <- gdp_eu_a %>%
+  mutate(
+    y_lead = lead(log_gdp, h),
+    y_lag0 = log_gdp,
+    y_lag1 = lag(log_gdp, 1),
+    y_lag2 = lag(log_gdp, 2)
+  ) %>%
+  filter(!is.na(y_lead), !is.na(y_lag2))
+
+ham_fit <- lm(y_lead ~ y_lag0 + y_lag1 + y_lag2, data=df_h)
+ham_tr <- df_h %>%
+  transmute(date = date,
+            ham_trend = predict(ham_fit),
+            ham_cycle = resid(ham_fit))
+
+gdp_eu_a <- gdp_eu_a %>%
+  left_join(ham_tr, by="date")
+
+##################################################################
+# 4) Graphiques PIB réel et log(PIB)
+##################################################################
+
+# PIB réel
+p1 <- ggplot(gdp_eu_a, aes(x = date, y = gdp_real / 1000)) +  # diviser par 1000 → milliards €
+  geom_line(color = "blue") +
+  labs(title = "PIB réel annuel UE27", x = "Année", y = "PIB réel (milliards €)") +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+
+# Log(PIB réel)
+p2 <- ggplot(gdp_eu_a, aes(x = date, y = log_gdp)) +
+  geom_line(color = "red") +
+  labs(title = "Log(PIB réel annuel)", x = "Année", y = "log(PIB réel)") +
+  theme_minimal()
+
+print(p1)
+print(p2)
+
+##################################################################
+# 5) ACF et différenciation
+##################################################################
+
+# Série log PIB
+log_gdp_ts <- ts(gdp_eu_a$log_gdp, start = year(min(gdp_eu_a$date)), frequency = 1)
+
+# Différence
+dlog_gdp <- diff(log_gdp_ts)
+
+# ACF
+library(forecast)
+
+ggAcf(log_gdp_ts, lag.max = 40) +
+  ggtitle("ACF : log(PIB réel annuel UE27)")
+
+##################################################################
+# 6) Tests de stationnarité
+##################################################################
+
+#Partie 2: Stationnarité
+# Visualisation
+# Série log PIB
+log_gdp_ts <- ts(na.omit(gdp_eu_a$log_gdp), start=1995, frequency=1)
+
+# Tests au niveau
+adf_lvl  <- ur.df(log_gdp_ts, type = "drift", selectlags = "AIC")
+summary(adf_lvl)
+
+pp_lvl   <- pp.test(log_gdp_ts)
+pp_lvl
+
+kpss_lvl <- kpss.test(log_gdp_ts, null = "Level")
+kpss_lvl
+
+# Différenciation
+dlog_gdp <- diff(log_gdp_ts)
+
+ggAcf(na.omit(dlog_gdp), lag.max = 40) +
+  ggtitle("ACF : Δlog(PIB)")
+
+adf_diff  <- ur.df(na.omit(dlog_gdp), type = "drift", selectlags = "AIC")
+summary(adf_diff)
+
+pp_diff   <- pp.test(na.omit(dlog_gdp))
+pp_diff
+
+kpss_diff <- kpss.test(na.omit(dlog_gdp), null = "Level")
