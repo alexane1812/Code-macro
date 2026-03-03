@@ -84,23 +84,18 @@ ggplot(gdp_eu_a, aes(x=date)) +
 # 3) Filtres cycliques
 ##################################################################
 
-# Créer la série temporelle
-log_gdp_ts <- ts(na.omit(gdp_eu_a$log_gdp),
-                 start = c(year(min(gdp_eu_a$date))),
-                 frequency = 1)
-
 # HP
 hp <- hpfilter(gdp_eu_a$log_gdp, freq=100)
 gdp_eu_a$hp_trend  <- hp$trend
 gdp_eu_a$hp_cycle  <- hp$cycle
 
 # BK
-bk <- bkfilter(gdp_eu_a$log_gdp, pl=6, pu=32, nfix=NULL, drift=FALSE)
+bk <- bkfilter(gdp_eu_a$log_gdp, pl=2, pu=5, drift=FALSE)
 gdp_eu_a$bk_trend  <- bk$trend
 gdp_eu_a$bk_cycle  <- bk$cycle
 
 # CF
-cf <- cffilter(gdp_eu_a$log_gdp, pl=6, pu=32, root=TRUE, drift=FALSE, type="asymmetric")
+cf <- cffilter(gdp_eu_a$log_gdp, pl=2, pu=5, root=TRUE, drift=FALSE, type="asymmetric")
 gdp_eu_a$cf_trend  <- cf$trend
 gdp_eu_a$cf_cycle  <- cf$cycle
 
@@ -123,6 +118,44 @@ ham_tr <- df_h %>%
 
 gdp_eu_a <- gdp_eu_a %>%
   left_join(ham_tr, by="date")
+
+# ---- Comparaison des tendances ----
+
+trend_long <- gdp_eu_a |>
+  select(date, hp_trend, bk_trend, cf_trend, ham_trend) |>
+  pivot_longer(-date, names_to = "Méthode", values_to = "trend") |>
+  mutate(Méthode = dplyr::recode(Méthode,
+                                 hp_trend  = "Tendance HP",
+                                 bk_trend  = "Tendance BK",
+                                 cf_trend  = "Tendance CF",
+                                 ham_trend = "Tendance Hamilton"))
+
+print(
+ggplot() +
+  geom_line(data = gdp_eu_a, aes(date, log_gdp), alpha = 0.3) +
+  geom_line(data = trend_long, aes(date, trend, color = Méthode, linetype = Méthode), linewidth = 1) +
+  labs(title = "Tendances de log(ratio crédit/PIB) : HP, BK, CF, Hamilton (BIS via FRED)",
+       x = NULL, y = "log(ratio)", color = NULL, linetype = NULL) +
+  theme(legend.position = "bottom")
+)
+
+# ---- Comparaison des cycles (≈ % car en unités log) ----
+cycle_long <- gdp_eu_a |>
+  transmute(date,
+            `Cycle HP`        = hp_cycle,
+            `Cycle BK`        = bk_cycle,
+            `Cycle CF (CK)`   = cf_cycle,
+            `Cycle Hamilton`  = ham_cycle) |>
+  pivot_longer(-date, names_to = "Méthode", values_to = "cycle")
+
+print(
+ggplot(cycle_long, aes(date, cycle, color = Méthode, linetype = Méthode)) +
+  geom_line() +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1)) +
+  labs(title = "Cycles de log(ratio crédit/PIB) : HP, BK, CF (CK), Hamilton",
+       x = NULL, y = "Pourcentage (approx., écart en log)", color = NULL, linetype = NULL) +
+  theme(legend.position = "bottom")
+)
 
 ##################################################################
 # 4) Graphiques PIB réel et log(PIB)
