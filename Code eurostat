@@ -225,3 +225,46 @@ pp_diff   <- pp.test(na.omit(dlog_gdp))
 pp_diff
 
 kpss_diff <- kpss.test(na.omit(dlog_gdp), null = "Level")
+
+library(dplyr)
+library(readxl)
+
+# 1️⃣ Lire les données R&D et brevets depuis Excel
+rd <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "R&D")
+brevets <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "brevets")
+
+# 2️⃣ Fusionner les deux datasets par année et pays si nécessaire
+data_proxy <- rd %>%
+  inner_join(brevets, by = c("TIME_PERIOD", "geo")) %>%
+  rename(
+    rd_valeur = `valeur normalisée`,
+    brevets_valeur = `obs normalisées brevets`
+  ) %>%
+  mutate(
+    rd_norm = as.numeric(scale(rd_valeur)),
+    brevets_norm = as.numeric(scale(brevets_valeur)),
+    proxy = (0.5*rd_norm + 0.5*brevets_norm)
+  ) %>%
+  group_by(TIME_PERIOD) %>%         # Agréger UE si plusieurs pays
+  summarise(proxy = mean(proxy, na.rm = TRUE))
+
+# 3️⃣ Préparer le PIB UE27 depuis Eurostat (tu as déjà gdp_eu_a)
+pib <- gdp_eu_a %>%
+  transmute(TIME_PERIOD = year(date), PIB = gdp_real)
+
+# 4️⃣ Fusionner proxy et PIB par année
+data_final <- data_proxy %>%
+  inner_join(pib, by = "TIME_PERIOD") %>%
+  filter(!is.na(proxy), !is.na(PIB))
+
+# 5️⃣ Régression linéaire
+model <- lm(PIB ~ proxy, data = data_final)
+summary(model)
+
+# 6️⃣ Optionnel : graphique
+library(ggplot2)
+ggplot(data_final, aes(x = proxy, y = PIB)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(title = "Effet du proxy Innovation sur le PIB UE27",
+       x = "Proxy Innovation", y = "PIB réel UE27")
