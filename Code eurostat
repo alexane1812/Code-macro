@@ -18,9 +18,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-##################################################################
-## Packages
-##################################################################
+# **Packages**
 
 ```{r}
 # Nettoyer l'environnement
@@ -63,9 +61,9 @@ transmute <- dplyr::transmute
 rename    <- dplyr::rename
 ```
 
+# **1) Données : FRED (Real GDP UE, Seasonally Adjusted - 1995-2025)**
 
 ```{r}
-# ---- 1) Données : FRED (Real GDP UE, Seasonally Adjusted - 1995-2025 - ) ----
 getSymbols("CLVMNACSCAB1GQEU272020", src = "FRED")  
 
 # Création d’un tableau « propre » (tibble) nommé "fr"
@@ -99,9 +97,7 @@ fr_annuel <- tibble(
   )
 ```
 
-##################################################################
-# 2) Séries log et tendances déterministes
-##################################################################
+# **2) Séries log et tendances déterministes**
 
 ```{r}
 fr_annuel <- fr_annuel %>%
@@ -129,9 +125,7 @@ ggplot(fr_annuel, aes(x = date)) +
   theme(legend.position = "bottom")
 ```
 
-##################################################################
-# 3) Filtres cycliques
-##################################################################
+# **3) Filtres cycliques**
 
 ```{r}
 # HP
@@ -215,9 +209,7 @@ print(
 )
 ```
 
-##################################################################
-# 4) Graphiques PIB réel et log(PIB)
-##################################################################
+# **4) Graphiques PIB réel et log(PIB)**
 
 ```{r}
 p1 <- ggplot(fr_annuel, aes(x = date, y = ratio)) +
@@ -235,9 +227,7 @@ print(p1)
 print(p2)
 ```
 
-##################################################################
-# 5) ACF et différenciation
-##################################################################
+# **5) ACF et différenciation**
 
 ```{r}
 log_gdp_ts <- ts(fr_annuel$lratio, start = year(min(fr_annuel$date)), frequency = 1)
@@ -252,9 +242,7 @@ acf(log(ratio_ts), main = "ACF trimestrielle")
 acf(log_gdp_ts, main = "ACF annuelle")
 ```
 
-##################################################################
-# 6) Tests de stationnarité — PIB
-##################################################################
+# **6) Tests de stationnarité — PIB**
 
 ```{r}
 log_gdp_ts <- ts(na.omit(fr_annuel$lratio), start = 1995, frequency = 1)
@@ -285,9 +273,7 @@ kpss_diff <- tseries::kpss.test(na.omit(dlog_gdp), null = "Level")
 kpss_diff
 ```
 
-##################################################################
-# 7) Chargement proxy vert + construction
-##################################################################
+# **7) Chargement proxy vert + construction**
 
 ```{r}
 rd <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "R&D")
@@ -342,9 +328,7 @@ ggplot(data_long, aes(x = proxy_value, y = PIB)) +
   theme_minimal()
 ```
 
-###################################################################
-# 8) Passage en log pour le VAR/VECM
-###################################################################
+# **8) Passage en log pour le VAR/VECM**
 
 ```{r}
 data_final <- data_final %>%
@@ -360,9 +344,7 @@ log_PIB_ts   <- ts(data_final$log_PIB,   start = start_yr, frequency = 1)
 log_rd_ts <- ts(data_final$log_rd, start = start_yr, frequency = 1)
 ```
 
-###################################################################
-# 9) Tests de stationnarité — Investissement vert
-###################################################################
+# **9) Tests de stationnarité — Investissement vert**
 
 ```{r}
 cat("\n===== ADF — log(Investissement vert) en niveau =====\n")
@@ -383,9 +365,8 @@ ggAcf(diff(log_rd_ts), lag.max = 20) +
   ggtitle("ACF : Δlog(Investissement vert)")
 ```
 
-###################################################################
-# 10) Test Engle–Granger (cointégration bivariée)
-###################################################################
+# **10) Test Engle–Granger (cointégration bivariée)**
+
 
 ```{r}
 eg_reg   <- lm(log_PIB_ts ~ log_rd_ts)
@@ -398,9 +379,7 @@ adf_eg <- ur.df(resid_eg, type = "none", lags = 4)
 summary(adf_eg)
 ```
 
-###################################################################
-# 11) Test de Johansen et sélection du rang de cointégration
-###################################################################
+# **11) Test de Johansen et sélection du rang de cointégration**
 
 ```{r}
 Y <- cbind(log_PIB_ts, log_rd_ts)
@@ -419,9 +398,7 @@ joh_trace <- urca::ca.jo(Y, type = "trace", ecdet = "const", K = p)
 summary(joh_trace)
 ```
 
-###################################################################
-# 12) Estimation du VECM (rang r = 1)
-###################################################################
+# **12) Estimation du VECM (rang r = 1)**
 
 ```{r}
 # Estimation du VECM avec la méthode de Johansen
@@ -435,9 +412,7 @@ cat("\n===== Vecteur de cointégration =====\n")
 joh_trace@V
 ```
 
-###################################################################
-# 13) Représentation VAR du VECM — IRF et FEVD
-###################################################################
+# **13) Représentation VAR du VECM — IRF et FEVD**
 
 ```{r}
 # Transformation du VECM en VAR pour IRF et FEVD
@@ -471,9 +446,7 @@ fevd_res <- vars::fevd(vecm_var, n.ahead = 10)
 plot(fevd_res)
 ```
 
-###################################################################
-# 14) Tests de validation des résidus du VECM
-###################################################################
+# **14) Tests de validation des résidus du VECM**
 
 ```{r}
 # Test d’autocorrélation des résidus (Portmanteau)
@@ -488,3 +461,5 @@ norm_test
 arch_test <- vars::arch.test(vecm_var, lags.multi = 5)
 arch_test
 ```
+
+
