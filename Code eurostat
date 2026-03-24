@@ -2,6 +2,7 @@
 # Master 1 APE - MPE
 # PIB réel UE : Filtres de tendance + Stationnarité (FRED)
 ##################################################################
+
 # Nettoyer l'environnement
 rm(list = ls())
 try(dev.off(dev.list()["RStudioGD"]), silent = TRUE)
@@ -35,7 +36,7 @@ library(readxl)
 # Réinitialiser les marges graphiques par défaut
 par(mar = c(5, 4, 4, 2) + 0.1)
 
-# ⚠️ Forcer les fonctions dplyr après chargement de quantmod
+# Forcer les fonctions dplyr après chargement de quantmod
 #    (quantmod écrase select, filter, lag de dplyr)
 select    <- dplyr::select
 filter    <- dplyr::filter
@@ -273,29 +274,45 @@ data_proxy <- rd %>%
     brevets_valeur = `obs normalisées brevets`
   ) %>%
   dplyr::mutate(
-    rd_norm      = as.numeric(scale(rd_valeur)),
-    brevets_norm = as.numeric(scale(brevets_valeur)),
-    proxy        = 0.5 * rd_norm + 0.5 * brevets_norm
+    rd_norm       = as.numeric(scale(rd_valeur)),
+    brevets_norm  = as.numeric(scale(brevets_valeur)),
+    rd      = rd_norm,                        # R&D seul
+    proxy     = 0.5 * rd_norm + 0.5 * brevets_norm,  # Proxy
+    brevets = brevets_norm                    # Brevets seul
   ) %>%
   dplyr::group_by(TIME_PERIOD) %>%
-  dplyr::summarise(proxy = mean(proxy, na.rm = TRUE), .groups = "drop")
+  dplyr::summarise(
+    rd      = mean(rd, na.rm = TRUE),
+    proxy     = mean(proxy, na.rm = TRUE),
+    brevets = mean(brevets, na.rm = TRUE),
+    .groups = "drop"
+  )
 
 pib <- fr_annuel %>%
   dplyr::transmute(TIME_PERIOD = lubridate::year(date), PIB = ratio)
 
+# Fusionner les données
 data_final <- data_proxy %>%
-  dplyr::inner_join(pib, by = "TIME_PERIOD") %>%
-  dplyr::filter(!is.na(proxy), !is.na(PIB))
+  inner_join(pib, by = "TIME_PERIOD")
 
-# Régression OLS
-model <- lm(PIB ~ proxy, data = data_final)
-summary(model)
+# Mettre les données en format long
+data_long <- data_final %>%
+  pivot_longer(
+    cols = c(rd, proxy, brevets),
+    names_to = "proxy_type",
+    values_to = "proxy_value"
+  )
 
-ggplot(data_final, aes(x = proxy, y = PIB)) +
-  geom_point() +
-  geom_smooth(method = "lm", color = "blue") +
-  labs(title = "Effet du proxy Innovation sur le PIB UE27",
-       x = "Proxy Innovation", y = "PIB réel UE27") +
+# Graphiques côte à côte
+ggplot(data_long, aes(x = proxy_value, y = PIB)) +
+  geom_point(color = "steelblue") +
+  geom_smooth(method = "lm", color = "darkred", se = FALSE) +
+  facet_wrap(~ proxy_type, scales = "free_x") +
+  labs(
+    title = "Effet comparé du proxy et des données seules sur le PIB UE27",
+    x = "Valeur du proxy",
+    y = "PIB réel UE27"
+  ) +
   theme_minimal()
 
 
@@ -307,42 +324,42 @@ data_final <- data_final %>%
   dplyr::arrange(TIME_PERIOD) %>%
   dplyr::mutate(
     log_PIB   = log(PIB),
-    log_proxy = log(proxy - min(proxy) + 1)   # décalage si valeurs négatives
+    log_rd = log(rd - min(rd) + 1)   # décalage si valeurs négatives
   )
 
 start_yr <- min(data_final$TIME_PERIOD)
 
 log_PIB_ts   <- ts(data_final$log_PIB,   start = start_yr, frequency = 1)
-log_proxy_ts <- ts(data_final$log_proxy, start = start_yr, frequency = 1)
+log_rd_ts <- ts(data_final$log_rd, start = start_yr, frequency = 1)
 
 
 ###################################################################
-# 9) Tests de stationnarité — Proxy vert
+# 9) Tests de stationnarité — Investissement vert
 ###################################################################
 
-cat("\n===== ADF — log(Proxy vert) en niveau =====\n")
-adf_proxy_lvl <- ur.df(log_proxy_ts, type = "drift", selectlags = "AIC")
-summary(adf_proxy_lvl)
+cat("\n===== ADF — log(Investissement vert) en niveau =====\n")
+adf_rd_lvl <- ur.df(log_rd_ts, type = "drift", selectlags = "AIC")
+summary(adf_rd_lvl)
 
-cat("\n===== ADF — Δlog(Proxy vert) =====\n")
-adf_proxy_diff <- ur.df(diff(log_proxy_ts), type = "drift", selectlags = "AIC")
-summary(adf_proxy_diff)
+cat("\n===== ADF — Δlog(Investissement vert) =====\n")
+adf_rd_diff <- ur.df(diff(log_rd_ts), type = "drift", selectlags = "AIC")
+summary(adf_rd_diff)
 
-pp.test(log_proxy_ts)
-tseries::kpss.test(log_proxy_ts, null = "Level")
+pp.test(log_rd_ts)
+tseries::kpss.test(log_rd_ts, null = "Level")
 
-ggAcf(log_proxy_ts, lag.max = 20) +
-  ggtitle("ACF : log(Proxy vert UE27)")
+ggAcf(log_rd_ts, lag.max = 20) +
+  ggtitle("ACF : log(Investissement vert UE27)")
 
-ggAcf(diff(log_proxy_ts), lag.max = 20) +
-  ggtitle("ACF : Δlog(Proxy vert)")
+ggAcf(diff(log_rd_ts), lag.max = 20) +
+  ggtitle("ACF : Δlog(Investissement vert)")
 
 
 ###################################################################
 # 10) Test Engle–Granger (cointégration bivariée)
 ###################################################################
 
-eg_reg   <- lm(log_PIB_ts ~ log_proxy_ts)
+eg_reg   <- lm(log_PIB_ts ~ log_rd_ts)
 summary(eg_reg)
 
 resid_eg <- residuals(eg_reg)
@@ -356,77 +373,81 @@ summary(adf_eg)
 # 11) Test de Johansen et sélection du rang de cointégration
 ###################################################################
 
-Y <- cbind(log_PIB_ts, log_proxy_ts)
-colnames(Y) <- c("log_PIB", "log_Proxy")
+Y <- cbind(log_PIB_ts, log_rd_ts)
+colnames(Y) <- c("log_PIB", "log_RD")
 
-lag_select <- vars::VARselect(Y, lag.max = 8, type = "const")
-lag_select
+# lag.max = 2 car T ≈ 18 obs annuelles (règle T^1/3 ≈ 2.6)
+lag_select <- vars::VARselect(Y, lag.max = 2, type = "const")
 lag_select$selection
 
-p <- as.numeric(lag_select$selection["AIC(n)"])
-p
+# SC sur petit échantillon + sécurité min = 2 pour ca.jo
+p <- max(as.numeric(lag_select$selection["SC(n)"]), 2)
+p  
 
 cat("\n===== Test de Johansen (trace) =====\n")
-joh_trace <- urca::ca.jo(
-  Y,
-  type  = "trace",
-  ecdet = "const",
-  K     = p
-)
+joh_trace <- urca::ca.jo(Y, type = "trace", ecdet = "const", K = p)
 summary(joh_trace)
-
 
 ###################################################################
 # 12) Estimation du VECM (rang r = 1)
 ###################################################################
 
+# Estimation du VECM avec la méthode de Johansen
 vecm <- urca::cajorls(joh_trace, r = 1)
+
+# Résumé de la régression (partie RLM)
 summary(vecm$rlm)
 
+# Affichage du vecteur de cointégration
 cat("\n===== Vecteur de cointégration =====\n")
 joh_trace@V
-
 
 ###################################################################
 # 13) Représentation VAR du VECM — IRF et FEVD
 ###################################################################
 
+# Transformation du VECM en VAR pour IRF et FEVD
 vecm_var <- vars::vec2var(joh_trace, r = 1)
 
+# IRF : choc sur log_R&D → réponse log_PIB
 irf_gdp <- vars::irf(
   vecm_var,
-  impulse  = "log_Proxy",
+  impulse  = "log_RD",
   response = "log_PIB",
   n.ahead  = 10,
   boot     = TRUE
 )
 
-irf_proxy <- vars::irf(
+# IRF : choc sur log_PIB → réponse log_R&D
+irf_rd <- vars::irf(
   vecm_var,
   impulse  = "log_PIB",
-  response = "log_Proxy",
+  response = "log_RD",
   n.ahead  = 10,
   boot     = TRUE
 )
 
-plot(irf_gdp,   main = "IRF : Choc sur log(Proxy vert) → log(PIB UE27)")
-plot(irf_proxy, main = "IRF : Choc sur log(PIB) → log(Proxy vert)")
+# Ouvrir une nouvelle fenêtre graphique
+dev.new()
+plot(irf_gdp, main = "IRF : Choc sur log(R&D) → log(PIB UE27)")
+plot(irf_rd, main = "IRF : Choc sur log(PIB UE27) → log(R&D)")
 
-dev.new()  # ouvre une nouvelle fenêtre graphique indépendante
-plot(irf_gdp, main = "IRF : Choc sur log(Proxy vert) → log(PIB UE27)")
+# FEVD : contribution des chocs aux erreurs de prévision
 fevd_res <- vars::fevd(vecm_var, n.ahead = 10)
 plot(fevd_res)
-
 
 ###################################################################
 # 14) Tests de validation des résidus du VECM
 ###################################################################
 
+# Test d’autocorrélation des résidus (Portmanteau)
 serial_test <- vars::serial.test(vecm_var, lags.pt = 5, type = "PT.asymptotic")
 serial_test
 
+# Test de normalité des résidus
 norm_test <- vars::normality.test(vecm_var)
 norm_test
 
+# Test ARCH multivarié sur les résidus
 arch_test <- vars::arch.test(vecm_var, lags.multi = 5)
-arch_test 
+arch_test
