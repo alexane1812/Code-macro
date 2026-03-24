@@ -264,7 +264,7 @@ data_proxy <- rd %>%
   dplyr::mutate(
     rd_norm      = as.numeric(scale(rd_valeur)),
     brevets_norm = as.numeric(scale(brevets_valeur)),
-    proxy        = 0.5 * rd_norm + 0.5 * brevets_norm
+    proxy        = 1 * rd_norm + 0 * brevets_norm
   ) %>%
   dplyr::group_by(TIME_PERIOD) %>%
   dplyr::summarise(proxy = mean(proxy, na.rm = TRUE), .groups = "drop")
@@ -344,26 +344,20 @@ summary(adf_eg)
 ###################################################################
 # 11) Test de Johansen et sélection du rang de cointégration
 ###################################################################
-
 Y <- cbind(log_PIB_ts, log_proxy_ts)
 colnames(Y) <- c("log_PIB", "log_Proxy")
 
-lag_select <- vars::VARselect(Y, lag.max = 8, type = "const")
-lag_select
+# lag.max = 2 car T ≈ 18 obs annuelles (règle T^1/3 ≈ 2.6)
+lag_select <- vars::VARselect(Y, lag.max = 2, type = "const")
 lag_select$selection
 
-p <- as.numeric(lag_select$selection["AIC(n)"])
-p
+# SC sur petit échantillon + sécurité min = 2 pour ca.jo
+p <- max(as.numeric(lag_select$selection["SC(n)"]), 2)
+p  
 
 cat("\n===== Test de Johansen (trace) =====\n")
-joh_trace <- urca::ca.jo(
-  Y,
-  type  = "trace",
-  ecdet = "const",
-  K     = p
-)
+joh_trace <- urca::ca.jo(Y, type = "trace", ecdet = "const", K = p)
 summary(joh_trace)
-
 
 ###################################################################
 # 12) Estimation du VECM (rang r = 1)
