@@ -317,8 +317,8 @@ print(resume_tests)
 # 6) Chargement proxy vert + construction
 ##################################################################
 
-rd <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "R&D")
-brevets <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "brevets")
+rd <- read_excel("C:/Users/alexa/OneDrive/Bureau/Fac/Macroeconometrie/Investissement.xlsx", sheet = "R&D")
+brevets <- read_excel("C:/Users/alexa/OneDrive/Bureau/Fac/Macroeconometrie/Investissement.xlsx", sheet = "brevets")
 
 data_proxy <- rd %>%
   dplyr::inner_join(brevets, by = c("TIME_PERIOD", "geo")) %>%
