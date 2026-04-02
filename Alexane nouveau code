@@ -342,7 +342,8 @@ data_proxy <- rd %>%
   )
 
 pib <- fr_annuel %>%
-  dplyr::transmute(TIME_PERIOD = lubridate::year(date), PIB = ratio)
+  dplyr::group_by(TIME_PERIOD = lubridate::year(date)) %>%
+  dplyr::summarise(PIB = mean(ratio, na.rm = TRUE))
 
 # Fusionner les données
 data_final <- data_proxy %>%
@@ -368,15 +369,16 @@ ggplot(data_long, aes(x = proxy_value, y = PIB)) +
   ) +
   theme_minimal()
 
+
 ###################################################################
-# 8) Passage en log pour le VAR/VECM
+# 7) Passage en log pour le VAR/VECM
 ###################################################################
 
 data_final <- data_final %>%
   dplyr::arrange(TIME_PERIOD) %>%
   dplyr::mutate(
     log_PIB   = log(PIB),
-    log_rd = log(rd - min(rd) + 1)   # décalage si valeurs négatives
+    log_rd = log(rd + abs(min(rd)) + 1)   # décalage si valeurs négatives
   )
 
 start_yr <- min(data_final$TIME_PERIOD)
@@ -386,7 +388,7 @@ log_rd_ts <- ts(data_final$log_rd, start = start_yr, frequency = 1)
 
 
 ###################################################################
-# 9) Tests de stationnarité — Investissement vert
+# 8) Tests de stationnarité — Investissement vert
 ###################################################################
 
 cat("\n===== ADF — log(Investissement vert) en niveau =====\n")
@@ -406,8 +408,9 @@ ggAcf(log_rd_ts, lag.max = 20) +
 ggAcf(diff(log_rd_ts), lag.max = 20) +
   ggtitle("ACF : Δlog(Investissement vert)")
 
+
 ###################################################################
-# 10) Test Engle–Granger (cointégration bivariée)
+# 9) Test Engle–Granger (cointégration bivariée)
 ###################################################################
 
 eg_reg   <- lm(log_PIB_ts ~ log_rd_ts)
@@ -419,8 +422,9 @@ cat("\n===== ADF — Résidus Engle–Granger =====\n")
 adf_eg <- ur.df(resid_eg, type = "none", lags = 4)
 summary(adf_eg)
 
+
 ###################################################################
-# 11) Test de Johansen et sélection du rang de cointégration
+# 10) Test de Johansen et sélection du rang de cointégration
 ###################################################################
 
 Y <- cbind(log_PIB_ts, log_rd_ts)
@@ -439,7 +443,7 @@ joh_trace <- urca::ca.jo(Y, type = "trace", ecdet = "const", K = p)
 summary(joh_trace)
 
 ###################################################################
-# 12) Estimation du VECM (rang r = 1)
+# 11) Estimation du VECM (rang r = 1)
 ###################################################################
 
 # Estimation du VECM avec la méthode de Johansen
@@ -453,7 +457,7 @@ cat("\n===== Vecteur de cointégration =====\n")
 joh_trace@V
 
 ###################################################################
-# 13) Représentation VAR du VECM — IRF et FEVD
+# 12) Représentation VAR du VECM — IRF et FEVD
 ###################################################################
 
 # Transformation du VECM en VAR pour IRF et FEVD
@@ -487,7 +491,7 @@ fevd_res <- vars::fevd(vecm_var, n.ahead = 10)
 plot(fevd_res)
 
 ###################################################################
-# 14) Tests de validation des résidus du VECM
+# 13) Tests de validation des résidus du VECM
 ###################################################################
 
 # Test d’autocorrélation des résidus (Portmanteau)
