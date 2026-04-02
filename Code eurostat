@@ -1,30 +1,16 @@
----
-title: "Master 1 APE - MPE - Proxy vert et PIB UE27 de 1995 à 2025"
-author: "Ton nom"
-date: "24/03/2026"
-output:
-  html_document:
-    theme: cosmo
-    toc: true
-    toc_float: true
----
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  echo = TRUE,
-  warning = FALSE,
-  message = FALSE,
-  fig.width = 7,
-  fig.height = 5
-)
-```
+##################################################################
+# Master 1 APE - MPE
+# PIB réel UE : Filtres de tendance + Stationnarité (FRED)
+##################################################################
 
-# **Packages**
-
-```{r}
 # Nettoyer l'environnement
 rm(list = ls())
 try(dev.off(dev.list()["RStudioGD"]), silent = TRUE)
 try(dev.off(), silent = TRUE)
+
+############################################################
+# 0) Packages
+############################################################
 
 # À faire une fois si besoin :
 # install.packages(c("dplyr","lubridate","zoo","ggplot2","scales","tidyr",
@@ -59,17 +45,17 @@ summarise <- dplyr::summarise
 mutate    <- dplyr::mutate
 transmute <- dplyr::transmute
 rename    <- dplyr::rename
-```
 
-# **1) Données : FRED (Real GDP UE, Seasonally Adjusted - 1995-2025)**
+#################################################################
+# 1) Données : FRED (Real GDP UE, Seasonally Adjusted - 1995-2025 
+#################################################################
 
-```{r}
 getSymbols("CLVMNACSCAB1GQEU272020", src = "FRED")  
 
 # Création d’un tableau « propre » (tibble) nommé "fr"
 fr <- tibble(
   date  = as.Date(index(CLVMNACSCAB1GQEU272020)),
-  ratio = as.numeric(CLVMNACSCAB1GQEU272020)/100        # conversion en proportion (plus en % du PIB)
+  ratio = as.numeric(CLVMNACSCAB1GQEU272020)       # conversion en proportion (plus en % du PIB)
 ) |>
   arrange(date) |>                          # Optionnel : ordonner chronologiquement (bonne pratique avant graphes/joins)
   distinct(date, .keep_all = TRUE) |>       # Optionnel : supprimer les doublons de dates (garder la 1re occurrence)
@@ -83,8 +69,8 @@ ratio_ts  <- ts(fr$ratio, start = c(year(min(fr$date)), quarter(min(fr$date))), 
 lratio_ts <- ts(fr$lratio, start = c(year(min(fr$date)), quarter(min(fr$date))), frequency = 4)
 
 # Séries annuelles (niveaux et logs)
-ratio_ann_ts  <- aggregate(ratio_ts,  nfrequency = 1, FUN = mean)
-lratio_ann_ts <- aggregate(lratio_ts, nfrequency = 1, FUN = mean) 
+ratio_ann_ts  <- aggregate(ratio_ts,  nfrequency = 1, FUN = last)
+lratio_ann_ts <- aggregate(lratio_ts, nfrequency = 1, FUN = last) 
 
 # Conversion en dataframe
 fr_annuel <- tibble(
@@ -95,11 +81,27 @@ fr_annuel <- tibble(
   mutate(
     date = as.Date(paste0(floor(annee), "-01-01"))
   )
-```
 
-# **2) Séries log et tendances déterministes**
+# Graphiques PIB réel et log(PIB)
 
-```{r}
+p1 <- ggplot(fr_annuel, aes(x = date, y = ratio)) +
+  geom_line(color = "blue") +
+  labs(title = "PIB réel annuel UE27", x = "Année", y = "Millions d’euros") +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+
+p2 <- ggplot(fr_annuel, aes(x = date, y = lratio)) +
+  geom_line(color = "red") +
+  labs(title = "Log(PIB réel annuel)", x = "Année", y = "log(PIB réel)") +
+  theme_minimal()
+
+print(p1)
+print(p2)
+
+##################################################################
+# 2) Séries log et tendances déterministes
+##################################################################
+
 fr_annuel <- fr_annuel %>%
   mutate(
     t  = row_number(),
@@ -123,48 +125,57 @@ ggplot(fr_annuel, aes(x = date)) +
        y = "log(PIB réel)", x = "Année") +
   theme_minimal() +
   theme(legend.position = "bottom")
-```
 
-# **3) Filtres cycliques**
+##################################################################
+# 3) Filtres cycliques
+##################################################################
 
-```{r}
 # HP
 hp <- hpfilter(fr_annuel$lratio, freq = 100)
 fr_annuel$hp_trend <- hp$trend
 fr_annuel$hp_cycle <- hp$cycle
 
 # BK
-bk <- bkfilter(fr_annuel$lratio, pl = 2, pu = 5, drift = FALSE)
+bk <- bkfilter(fr_annuel$lratio, pl = 2, pu = 8, drift = FALSE)
 fr_annuel$bk_trend <- bk$trend
 fr_annuel$bk_cycle <- bk$cycle
 
 # CF
-cf <- cffilter(fr_annuel$lratio, pl = 2, pu = 5, root = TRUE, drift = FALSE, type = "asymmetric")
+cf <- cffilter(fr_annuel$lratio, pl = 2, pu = 8, root = TRUE, drift = FALSE, type = "asymmetric")
 fr_annuel$cf_trend <- cf$trend
 fr_annuel$cf_cycle <- cf$cycle
 
 # Hamilton
 h <- 2
+
 df_h <- fr_annuel %>%
   mutate(
     y_lead = lead(lratio, h),
     y_lag0 = lratio,
     y_lag1 = lag(lratio, 1),
-    y_lag2 = lag(lratio, 2)
+    y_lag2 = lag(lratio, 2),
+    y_lag3 = lag(lratio, 3)
   ) %>%
-  filter(!is.na(y_lead), !is.na(y_lag2))
+  filter(!is.na(y_lead), !is.na(y_lag3))  # ⚠️ important
 
-ham_fit <- lm(y_lead ~ y_lag0 + y_lag1 + y_lag2, data = df_h)
+# Estimation
+ham_fit <- lm(y_lead ~ y_lag0 + y_lag1 + y_lag2 + y_lag3, data = df_h)
 
+# PRÉDICTION dans un vecteur séparé
+ham_pred <- predict(ham_fit)
+
+# Ajout propre
 ham_tr <- df_h %>%
-  dplyr::transmute(
-    date      = date,
-    ham_trend = predict(ham_fit),
-    ham_cycle = resid(ham_fit)
+  dplyr::select(date) %>%
+  mutate(
+    ham_trend = ham_pred,
+    ham_cycle = residuals(ham_fit)
   )
 
+# Join final
 fr_annuel <- fr_annuel %>%
-  dplyr::left_join(ham_tr, by = "date")
+  left_join(ham_tr, by = "date") %>%
+  arrange(date)
 
 # ---- Comparaison des tendances ----
 trend_long <- fr_annuel %>%
@@ -207,29 +218,11 @@ print(
     theme_minimal() +
     theme(legend.position = "bottom")
 )
-```
 
-# **4) Graphiques PIB réel et log(PIB)**
+##################################################################
+# 4) ACF et différenciation
+##################################################################
 
-```{r}
-p1 <- ggplot(fr_annuel, aes(x = date, y = ratio)) +
-  geom_line(color = "blue") +
-  labs(title = "PIB réel annuel UE27", x = "Année", y = "ratio") +
-  scale_y_continuous(labels = comma) +
-  theme_minimal()
-
-p2 <- ggplot(fr_annuel, aes(x = date, y = lratio)) +
-  geom_line(color = "red") +
-  labs(title = "Log(PIB réel annuel)", x = "Année", y = "log(PIB réel)") +
-  theme_minimal()
-
-print(p1)
-print(p2)
-```
-
-# **5) ACF et différenciation**
-
-```{r}
 log_gdp_ts <- ts(fr_annuel$lratio, start = year(min(fr_annuel$date)), frequency = 1)
 dlog_gdp   <- diff(log_gdp_ts)
 
@@ -238,18 +231,24 @@ ggAcf(log_gdp_ts, lag.max = 40) +
 
 par(mfrow = c(1,2))
 
-acf(log(ratio_ts), main = "ACF trimestrielle")
-acf(log_gdp_ts, main = "ACF annuelle")
-```
+# Comparaison données non transformées vs transformées
+acf(lratio_ts, lag.max = 40, main = "ACF trimestrielle (non transformées)")
+acf(na.omit(log_gdp_ts),lag.max = 40, main = "ACF annuelle (transformées)")
 
-# **6) Tests de stationnarité — PIB**
+ggAcf(na.omit(dlog_gdp), lag.max = 40) +
+  ggtitle("ACF : Δlog(PIB)")
 
-```{r}
-log_gdp_ts <- ts(na.omit(fr_annuel$lratio), start = 1995, frequency = 1)
+##################################################################
+# 5) Tests de stationnarité — PIB
+##################################################################
 
 # En niveau
 adf_lvl  <- ur.df(log_gdp_ts, type = "drift", selectlags = "AIC")
 summary(adf_lvl)
+
+# ADF avec tendance
+adf_trend <- ur.df(log_gdp_ts, type = "trend", selectlags = "AIC")
+summary(adf_trend)
 
 pp_lvl   <- pp.test(log_gdp_ts)
 pp_lvl
@@ -257,11 +256,9 @@ pp_lvl
 kpss_lvl <- tseries::kpss.test(log_gdp_ts, null = "Level")
 kpss_lvl
 
-# En différence
-dlog_gdp <- diff(log_gdp_ts)
-
-ggAcf(na.omit(dlog_gdp), lag.max = 40) +
-  ggtitle("ACF : Δlog(PIB)")
+# KPSS avec tendance
+kpss_trend <- tseries::kpss.test(log_gdp_ts, null = "Trend")
+kpss_trend
 
 adf_diff <- ur.df(na.omit(dlog_gdp), type = "drift", selectlags = "AIC")
 summary(adf_diff)
@@ -271,11 +268,55 @@ pp_diff
 
 kpss_diff <- tseries::kpss.test(na.omit(dlog_gdp), null = "Level")
 kpss_diff
-```
 
-# **7) Chargement proxy vert + construction**
+# Fonction d'interprétation ADF
+interpret_adf <- function(adf_obj) {
+  stat <- adf_obj@teststat[1]
+  crit <- adf_obj@cval[1, "5pct"]
+  
+  if (stat < crit) {
+    return("Stationnaire (rejette H0)")
+  } else {
+    return("Non stationnaire (ne rejette pas H0)")
+  }
+}
 
-```{r}
+# Fonction d'interprétation PP
+interpret_pp <- function(pp_obj) {
+  if (pp_obj$p.value < 0.05) {
+    return("Stationnaire (rejette H0)")
+  } else {
+    return("Non stationnaire (ne rejette pas H0)")
+  }
+}
+
+# Fonction d'interprétation KPSS
+interpret_kpss <- function(kpss_obj) {
+  if (kpss_obj$p.value < 0.05) {
+    return("Non stationnaire (rejette H0)")
+  } else {
+    return("Stationnaire (ne rejette pas H0)")
+  }
+}
+
+# Création du tableau résumé
+resume_tests <- tibble::tibble(
+  Test = c("ADF (drift)", "ADF (trend)", "PP", "KPSS (level)", "KPSS (trend)"),
+  Résultat = c(
+    interpret_adf(adf_lvl),
+    interpret_adf(adf_trend),
+    interpret_pp(pp_lvl),
+    interpret_kpss(kpss_lvl),
+    interpret_kpss(kpss_trend)
+  )
+)
+
+print(resume_tests)
+
+##################################################################
+# 6) Chargement proxy vert + construction
+##################################################################
+
 rd <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "R&D")
 brevets <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "brevets")
 
@@ -301,7 +342,8 @@ data_proxy <- rd %>%
   )
 
 pib <- fr_annuel %>%
-  dplyr::transmute(TIME_PERIOD = lubridate::year(date), PIB = ratio)
+  dplyr::group_by(TIME_PERIOD = lubridate::year(date)) %>%
+  dplyr::summarise(PIB = mean(ratio, na.rm = TRUE))
 
 # Fusionner les données
 data_final <- data_proxy %>%
@@ -326,27 +368,29 @@ ggplot(data_long, aes(x = proxy_value, y = PIB)) +
     y = "PIB réel UE27"
   ) +
   theme_minimal()
-```
 
-# **8) Passage en log pour le VAR/VECM**
 
-```{r}
+###################################################################
+# 7) Passage en log pour le VAR/VECM
+###################################################################
+
 data_final <- data_final %>%
   dplyr::arrange(TIME_PERIOD) %>%
   dplyr::mutate(
     log_PIB   = log(PIB),
-    log_rd = log(rd - min(rd) + 1)   # décalage si valeurs négatives
+    log_rd = log(rd + abs(min(rd)) + 1)   # décalage si valeurs négatives
   )
 
 start_yr <- min(data_final$TIME_PERIOD)
 
 log_PIB_ts   <- ts(data_final$log_PIB,   start = start_yr, frequency = 1)
 log_rd_ts <- ts(data_final$log_rd, start = start_yr, frequency = 1)
-```
 
-# **9) Tests de stationnarité — Investissement vert**
 
-```{r}
+###################################################################
+# 8) Tests de stationnarité — Investissement vert
+###################################################################
+
 cat("\n===== ADF — log(Investissement vert) en niveau =====\n")
 adf_rd_lvl <- ur.df(log_rd_ts, type = "drift", selectlags = "AIC")
 summary(adf_rd_lvl)
@@ -363,12 +407,12 @@ ggAcf(log_rd_ts, lag.max = 20) +
 
 ggAcf(diff(log_rd_ts), lag.max = 20) +
   ggtitle("ACF : Δlog(Investissement vert)")
-```
-
-# **10) Test Engle–Granger (cointégration bivariée)**
 
 
-```{r}
+###################################################################
+# 9) Test Engle–Granger (cointégration bivariée)
+###################################################################
+
 eg_reg   <- lm(log_PIB_ts ~ log_rd_ts)
 summary(eg_reg)
 
@@ -377,11 +421,12 @@ resid_eg <- residuals(eg_reg)
 cat("\n===== ADF — Résidus Engle–Granger =====\n")
 adf_eg <- ur.df(resid_eg, type = "none", lags = 4)
 summary(adf_eg)
-```
 
-# **11) Test de Johansen et sélection du rang de cointégration**
 
-```{r}
+###################################################################
+# 10) Test de Johansen et sélection du rang de cointégration
+###################################################################
+
 Y <- cbind(log_PIB_ts, log_rd_ts)
 colnames(Y) <- c("log_PIB", "log_RD")
 
@@ -396,11 +441,11 @@ p
 cat("\n===== Test de Johansen (trace) =====\n")
 joh_trace <- urca::ca.jo(Y, type = "trace", ecdet = "const", K = p)
 summary(joh_trace)
-```
 
-# **12) Estimation du VECM (rang r = 1)**
+###################################################################
+# 11) Estimation du VECM (rang r = 1)
+###################################################################
 
-```{r}
 # Estimation du VECM avec la méthode de Johansen
 vecm <- urca::cajorls(joh_trace, r = 1)
 
@@ -410,11 +455,11 @@ summary(vecm$rlm)
 # Affichage du vecteur de cointégration
 cat("\n===== Vecteur de cointégration =====\n")
 joh_trace@V
-```
 
-# **13) Représentation VAR du VECM — IRF et FEVD**
+###################################################################
+# 12) Représentation VAR du VECM — IRF et FEVD
+###################################################################
 
-```{r}
 # Transformation du VECM en VAR pour IRF et FEVD
 vecm_var <- vars::vec2var(joh_trace, r = 1)
 
@@ -444,11 +489,11 @@ plot(irf_rd, main = "IRF : Choc sur log(PIB UE27) → log(R&D)")
 # FEVD : contribution des chocs aux erreurs de prévision
 fevd_res <- vars::fevd(vecm_var, n.ahead = 10)
 plot(fevd_res)
-```
 
-# **14) Tests de validation des résidus du VECM**
+###################################################################
+# 13) Tests de validation des résidus du VECM
+###################################################################
 
-```{r}
 # Test d’autocorrélation des résidus (Portmanteau)
 serial_test <- vars::serial.test(vecm_var, lags.pt = 5, type = "PT.asymptotic")
 serial_test
@@ -460,6 +505,3 @@ norm_test
 # Test ARCH multivarié sur les résidus
 arch_test <- vars::arch.test(vecm_var, lags.multi = 5)
 arch_test
-```
-
-
