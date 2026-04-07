@@ -156,7 +156,7 @@ df_h <- fr_annuel %>%
     y_lag2 = lag(lratio, 2),
     y_lag3 = lag(lratio, 3)
   ) %>%
-  filter(!is.na(y_lead), !is.na(y_lag3))  # ⚠️ important
+  filter(!is.na(y_lead), !is.na(y_lag3)) 
 
 # Estimation
 ham_fit <- lm(y_lead ~ y_lag0 + y_lag1 + y_lag2 + y_lag3, data = df_h)
@@ -339,8 +339,8 @@ print(resume_tests_diff)
 # 6) Chargement proxy vert + construction
 ##################################################################
 
-rd <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "R&D")
-brevets <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "brevets")
+rd <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "R&D") # Veuillez insérer les données excel
+brevets <- read_excel("C:/Users/Lucas/Downloads/Investissement.xlsx", sheet = "brevets")  # Veuillez insérer les données excel
 
 data_proxy <- rd %>%
   dplyr::inner_join(brevets, by = c("TIME_PERIOD", "geo")) %>%
